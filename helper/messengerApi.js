@@ -1,57 +1,11 @@
 const axios = require('axios');
 require('dotenv').config();
 
-const SEND_API_URL = `https://graph.facebook.com/v17.0/me/messages`;
-const APP_ACCESS_TOKEN = process.env.APP_ACCESS_TOKEN;
+const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
+const SEND_API_URL = `https://graph.facebook.com/v17.0/me/messages`; // ✅ استخدم "me" بدلاً من Page_ID
 
-if (!APP_ACCESS_TOKEN) {
-  console.error("❌ APP_ACCESS_TOKEN مفقود. تأكد من ضبط ملف .env بشكل صحيح.");
-  process.exit(1);
-}
-
-let cachedPageTokens = null;
-
-const getPageTokens = async (retryCount = 0) => {
-  if (cachedPageTokens) return cachedPageTokens;
-  try {
-    const response = await axios.get(`https://graph.facebook.com/me/accounts`, {
-      params: { access_token: APP_ACCESS_TOKEN }
-    });
-
-    const pages = response.data.data;
-    console.log("✅ الصفحات المرتبطة بالتطبيق:", pages);
-
-    if (pages.length === 0) {
-      console.warn("⚠️ لا توجد صفحات مرتبطة بالتطبيق.");
-      return {};
-    }
-
-    cachedPageTokens = {};
-    pages.forEach(page => {
-      cachedPageTokens[page.id] = page.access_token;
-    });
-
-    return cachedPageTokens;
-  } catch (error) {
-    console.error("❌ خطأ في جلب الصفحات:", error.response?.data || error);
-    
-    if (retryCount < 3) {
-      console.log(`🔄 إعادة المحاولة (${retryCount + 1}/3)...`);
-      await new Promise(res => setTimeout(res, 2000));
-      return getPageTokens(retryCount + 1);
-    }
-    return {};
-  }
-};
-
-const sendMessage = async (senderId, message, pageId) => {
-  const pageTokens = await getPageTokens();
-  if (!pageTokens[pageId]) {
-    console.error(`❌ لا يوجد توكن لهذه الصفحة: ${pageId}`);
-    return false;
-  }
-  const pageToken = pageTokens[pageId];
-
+// ✅ دالة إرسال الرسائل إلى ماسنجر
+const sendMessage = async (senderId, message) => {
   const data = {
     recipient: { id: senderId },
     message: { text: message },
@@ -59,24 +13,16 @@ const sendMessage = async (senderId, message, pageId) => {
 
   try {
     const response = await axios.post(SEND_API_URL, data, {
-      params: { access_token: pageToken }
+      params: { access_token: PAGE_ACCESS_TOKEN }
     });
-    console.log(`✅ تم إرسال الرسالة إلى المستخدم ${senderId}:`, response.data);
-    return true;
+    console.log(`✅ Message sent successfully to user ${senderId}:`, response.data);
   } catch (error) {
-    console.error("❌ خطأ في إرسال الرسالة:", error.response?.data || error);
-    return false;
+    console.error("❌ Error sending message:", error.response?.data || error);
   }
 };
 
-const setTypingOn = async (senderId, pageId) => {
-  const pageTokens = await getPageTokens();
-  if (!pageTokens[pageId]) {
-    console.error(`❌ لا يوجد توكن لهذه الصفحة: ${pageId}`);
-    return;
-  }
-  const pageToken = pageTokens[pageId];
-
+// ✅ تفعيل حالة "يكتب..."
+const setTypingOn = async (senderId) => {
   const data = {
     recipient: { id: senderId },
     sender_action: "typing_on",
@@ -84,7 +30,7 @@ const setTypingOn = async (senderId, pageId) => {
 
   try {
     await axios.post(SEND_API_URL, data, {
-      params: { access_token: pageToken }
+      params: { access_token: PAGE_ACCESS_TOKEN }
     });
     console.log(`✍️ Typing indicator set for user ${senderId}`);
   } catch (error) {
@@ -92,14 +38,8 @@ const setTypingOn = async (senderId, pageId) => {
   }
 };
 
-const setTypingOff = async (senderId, pageId) => {
-  const pageTokens = await getPageTokens();
-  if (!pageTokens[pageId]) {
-    console.error(`❌ لا يوجد توكن لهذه الصفحة: ${pageId}`);
-    return;
-  }
-  const pageToken = pageTokens[pageId];
-
+// ✅ إيقاف حالة "يكتب..."
+const setTypingOff = async (senderId) => {
   const data = {
     recipient: { id: senderId },
     sender_action: "typing_off",
@@ -107,7 +47,7 @@ const setTypingOff = async (senderId, pageId) => {
 
   try {
     await axios.post(SEND_API_URL, data, {
-      params: { access_token: pageToken }
+      params: { access_token: PAGE_ACCESS_TOKEN }
     });
     console.log(`✅ Typing indicator stopped for user ${senderId}`);
   } catch (error) {
