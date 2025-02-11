@@ -5,7 +5,7 @@ require('dotenv').config();
 
 const router = express.Router();
 let chatMemory = {}; // ✅ تخزين المحادثات لكل مستخدم
-let conversationContext = ""; // ✅ إضافة متغير لتخزين البرومبت القادم من الفرونت
+let conversationContext = "";
 
 // ✅ **التحقق من Webhook عند تسجيله في Meta Developer Console**
 router.get('/webhook', (req, res) => {
@@ -35,7 +35,7 @@ router.post('/send-prompt', async (req, res) => {
       return res.status(400).json({ message: "❌ الرجاء إدخال برومبت صالح" });
     }
 
-    conversationContext = prompt; // ✅ تحديث سياق المحادثة من الفرونت
+    conversationContext = prompt;
     console.log("🔄 تم تحديث سياق المحادثة:", conversationContext);
 
     res.json({ message: "✅ تم تحديث معلومات Gemini بنجاح!" });
@@ -48,7 +48,7 @@ router.post('/send-prompt', async (req, res) => {
 // ✅ استقبال رسائل ماسنجر وإرسالها إلى Gemini مع حفظ المحادثات السابقة
 router.post('/webhook', async (req, res) => {
   try {
-    console.log("📩 Received Webhook Event");
+    console.log("📩 Received Webhook Event:", JSON.stringify(req.body, null, 2));
 
     const body = req.body;
     res.status(200).send('EVENT_RECEIVED'); // ✅ تأكيد استلام الحدث لفيسبوك
@@ -73,14 +73,7 @@ router.post('/webhook', async (req, res) => {
       return;
     }
 
-    console.log(`📨 Received Message from Messenger (${senderId}):`, userMessage);
-
-    // ✅ مسح ذاكرة المحادثة عند انتهاء الجلسة
-    if (userMessage.toLowerCase() === "انتهينا" || userMessage.toLowerCase() === "ابدأ من جديد") {
-      chatMemory[senderId] = []; // ✅ مسح ذاكرة المحادثة لهذا المستخدم
-      await sendMessage(senderId, "🗑️ تم مسح المحادثة! كيف يمكنني مساعدتك؟");
-      return;
-    }
+    console.log("📨 Received Message from Messenger:", userMessage);
 
     // ✅ إنشاء ذاكرة محادثة للمستخدم إذا لم تكن موجودة
     if (!chatMemory[senderId]) {
@@ -92,14 +85,16 @@ router.post('/webhook', async (req, res) => {
 
     // ✅ التأكد من أن ذاكرة المستخدم لا تتجاوز 10 رسائل
     if (chatMemory[senderId].length > 10) {
-      chatMemory[senderId].shift(); // حذف أقدم رسالة للحفاظ على الحجم
+      chatMemory[senderId].shift();
     }
 
-    // ✅ إرسال حالة "يكتب..."
+    // ✅ تحديث `conversationContext` بسياق المحادثة السابقة
+    let chatHistory = chatMemory[senderId].map(msg => `User: ${msg.user}\nAssistant: ${msg.bot || ""}`).join("\n");
+
+    // ✅ إرسال الكتابة أثناء تجهيز الرد
     await setTypingOn(senderId);
 
-    // ✅ تجهيز البرومبت مع المحادثات السابقة
-    let chatHistory = chatMemory[senderId].map(msg => `User: ${msg.user}\nAssistant: ${msg.bot || ""}`).join("\n");
+    // ✅ إنشاء برومبت محكوم بالحدود المرسلة من الفرونت + المحادثات السابقة
     const fullPrompt = `${conversationContext}\n\n${chatHistory}\nUser: ${userMessage}\nAssistant:`;
 
     console.log("🧠 Sending to Gemini with prompt:", fullPrompt);
