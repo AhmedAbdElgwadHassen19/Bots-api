@@ -5,6 +5,7 @@ require('dotenv').config();
 
 const router = express.Router();
 let chatMemory = {}; // ✅ تخزين المحادثات لكل مستخدم
+let conversationContext = ""; // ✅ إضافة متغير لتخزين البرومبت القادم من الفرونت
 
 // ✅ **التحقق من Webhook عند تسجيله في Meta Developer Console**
 router.get('/webhook', (req, res) => {
@@ -24,6 +25,24 @@ router.get('/webhook', (req, res) => {
     }
   }
   res.status(400).send('❌ Bad Request: Missing Parameters');
+});
+
+// ✅ استقبال البرومبت من الفرونت لتحديث سياق المحادثة
+router.post('/send-prompt', async (req, res) => {
+  try {
+    const { prompt } = req.body;
+    if (!prompt) {
+      return res.status(400).json({ message: "❌ الرجاء إدخال برومبت صالح" });
+    }
+
+    conversationContext = prompt; // ✅ تحديث سياق المحادثة من الفرونت
+    console.log("🔄 تم تحديث سياق المحادثة:", conversationContext);
+
+    res.json({ message: "✅ تم تحديث معلومات Gemini بنجاح!" });
+  } catch (error) {
+    console.error("❌ Error in /send-prompt:", error);
+    res.status(500).json({ message: "⚠️ حدث خطأ غير متوقع" });
+  }
 });
 
 // ✅ استقبال رسائل ماسنجر وإرسالها إلى Gemini مع حفظ المحادثات السابقة
@@ -81,7 +100,7 @@ router.post('/webhook', async (req, res) => {
 
     // ✅ تجهيز البرومبت مع المحادثات السابقة
     let chatHistory = chatMemory[senderId].map(msg => `User: ${msg.user}\nAssistant: ${msg.bot || ""}`).join("\n");
-    const fullPrompt = `أنت مساعد ذكي يعتمد على السياق السابق:\n\n${chatHistory}\nUser: ${userMessage}\nAssistant:`;
+    const fullPrompt = `${conversationContext}\n\n${chatHistory}\nUser: ${userMessage}\nAssistant:`;
 
     console.log("🧠 Sending to Gemini with prompt:", fullPrompt);
 
