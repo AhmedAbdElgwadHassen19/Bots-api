@@ -7,7 +7,10 @@ const router = express.Router();
 let lastSenderId = null;
 let conversationContext = "";
 
-// ✅ **التحقق من Webhook عند تسجيله في Meta Developer Console**
+// ✅ تخزين المحادثات لكل مستخدم أثناء تشغيل السيرفر
+let userSessions = {};
+
+// ✅ التحقق من Webhook عند تسجيله في Meta Developer Console
 router.get('/webhook', (req, res) => {
   console.log("🔍 Received Webhook Verification Request");
 
@@ -44,6 +47,14 @@ router.post('/send-prompt', async (req, res) => {
     res.status(500).json({ message: "⚠️ حدث خطأ غير متوقع" });
   }
 });
+
+// ✅ تحديث سياق المحادثة لكل مستخدم
+function updateUserSession(userId, userMessage) {
+  if (!userSessions[userId]) {
+    userSessions[userId] = { conversation: "" };
+  }
+  userSessions[userId].conversation += `\nUser: ${userMessage}`;
+}
 
 // ✅ استقبال رسائل ماسنجر وإرسالها إلى Gemini
 router.post('/webhook', async (req, res) => {
@@ -89,13 +100,13 @@ router.post('/webhook', async (req, res) => {
       conversationContext = "أنت مساعد ذكي يجيب فقط ضمن النطاق المحدد له.";
     }
 
-    // ✅ إرسال الكتابة أثناء تجهيز الرد
-    await setTypingOn(lastSenderId);
+    // ✅ تحديث جلسة المستخدم بالمحادثة الجديدة
+    updateUserSession(lastSenderId, userMessage);
 
-    // ✅ إنشاء برومبت محكوم بالحدود المرسلة من الفرونت
-    const fullPrompt = `${conversationContext}\n\nUser: ${userMessage}\nAssistant:`;
+    // ✅ إنشاء برومبت باستخدام المحادثة الكاملة لكل مستخدم
+    const fullPrompt = `${conversationContext}\n${userSessions[lastSenderId].conversation}\nAssistant:`;
 
-    console.log("🧠 Sending to Gemini with prompt:", fullPrompt);
+    console.log("🧠 Sending to Gemini with context:", fullPrompt);
 
     // ✅ إرسال السؤال إلى Gemini
     const geminiResponse = await chatCompletion(fullPrompt);
@@ -109,7 +120,10 @@ router.post('/webhook', async (req, res) => {
 
     console.log("🤖 Gemini Response:", geminiResponse.response);
 
-    // ✅ إرسال الرد إلى ماسنجر مرة واحدة فقط
+    // ✅ تحديث المحادثة بإضافة رد البوت
+    userSessions[lastSenderId].conversation += `\nAssistant: ${geminiResponse.response}`;
+
+    // ✅ إرسال الرد إلى ماسنجر
     await sendMessage(lastSenderId, geminiResponse.response);
     
     // ✅ إيقاف الكتابة بعد إرسال الرد
@@ -120,5 +134,10 @@ router.post('/webhook', async (req, res) => {
     await sendMessage(lastSenderId, "⚠️ حدث خطأ أثناء معالجة طلبك. حاول مرة أخرى لاحقًا.");
   }
 });
+
+// ✅ مسح الجلسة بعد إنهاء المحادثة
+function clearUserSession(userId) {
+  delete userSessions[userId];
+}
 
 module.exports = { router };
