@@ -4,7 +4,7 @@ const { chatCompletion } = require('../helper/openaiApi');
 require('dotenv').config();
 
 const router = express.Router();
-let chatMemory = {}; // ✅ تخزين المحادثات لكل مستخدم
+let lastSenderId = null;
 let conversationContext = "";
 
 // ✅ **التحقق من Webhook عند تسجيله في Meta Developer Console**
@@ -45,7 +45,7 @@ router.post('/send-prompt', async (req, res) => {
   }
 });
 
-// ✅ استقبال رسائل ماسنجر وإرسالها إلى Gemini مع حفظ المحادثات السابقة
+// ✅ استقبال رسائل ماسنجر وإرسالها إلى Gemini
 router.post('/webhook', async (req, res) => {
   try {
     console.log("📩 Received Webhook Event:", JSON.stringify(req.body, null, 2));
@@ -60,14 +60,22 @@ router.post('/webhook', async (req, res) => {
 
     const messageEvent = body.entry[0].messaging[0];
 
-    if (messageEvent.message?.is_echo || messageEvent.delivery || messageEvent.read) {
-      console.warn("⚠️ Ignoring bot's own message or delivery/read notifications.");
+    // ✅ **تجنب الرد على رسائل البوت نفسه**
+    if (messageEvent.message?.is_echo) {
+      console.warn("⚠️ Ignoring bot's own message.");
       return;
     }
 
-    const senderId = messageEvent.sender.id;
+    // ✅ **تجنب الرد على إشعارات التسليم والقراءة**
+    if (messageEvent.delivery || messageEvent.read) {
+      console.warn("⚠️ Ignoring delivery/read notification.");
+      return;
+    }
+
+    lastSenderId = messageEvent.sender.id;
     const userMessage = messageEvent.message?.text;
 
+    // ✅ **إذا لم تكن الرسالة نصية، تجاهلها بدون إرسال أي رد**
     if (!userMessage) {
       console.warn("⚠️ Received a non-text message, ignoring it.");
       return;
@@ -75,53 +83,41 @@ router.post('/webhook', async (req, res) => {
 
     console.log("📨 Received Message from Messenger:", userMessage);
 
-    // ✅ إنشاء ذاكرة محادثة للمستخدم إذا لم تكن موجودة
-    if (!chatMemory[senderId]) {
-      chatMemory[senderId] = [];
+    // ✅ التأكد من أن هناك برومبت من الفرونت
+    if (!conversationContext) {
+      console.warn("⚠️ No prompt set from frontend. Using default.");
+      conversationContext = "أنت مساعد ذكي يجيب فقط ضمن النطاق المحدد له.";
     }
-
-    // ✅ إضافة الرسالة الجديدة إلى الذاكرة
-    chatMemory[senderId].push({ user: userMessage });
-
-    // ✅ التأكد من أن ذاكرة المستخدم لا تتجاوز 10 رسائل
-    if (chatMemory[senderId].length > 10) {
-      chatMemory[senderId].shift();
-    }
-
-    // ✅ تحديث `conversationContext` بسياق المحادثة السابقة
-    let chatHistory = chatMemory[senderId].map(msg => `User: ${msg.user}\nAssistant: ${msg.bot || ""}`).join("\n");
 
     // ✅ إرسال الكتابة أثناء تجهيز الرد
-    await setTypingOn(senderId);
+    await setTypingOn(lastSenderId);
 
-    // ✅ إنشاء برومبت محكوم بالحدود المرسلة من الفرونت + المحادثات السابقة
-    const fullPrompt = `${conversationContext}\n\n${chatHistory}\nUser: ${userMessage}\nAssistant:`;
+    // ✅ إنشاء برومبت محكوم بالحدود المرسلة من الفرونت
+    const fullPrompt = `${conversationContext}\n\nUser: ${userMessage}\nAssistant:`;
 
     console.log("🧠 Sending to Gemini with prompt:", fullPrompt);
 
     // ✅ إرسال السؤال إلى Gemini
     const geminiResponse = await chatCompletion(fullPrompt);
 
+    // ✅ التحقق من استجابة `Gemini`
     if (!geminiResponse || !geminiResponse.response) {
       console.error("❌ Error: Gemini response is empty.");
-      await sendMessage(senderId, "⚠️ لم أتمكن من معالجة طلبك، حاول مرة أخرى لاحقًا.");
+      await sendMessage(lastSenderId, "⚠️ لم أتمكن من معالجة طلبك، حاول مرة أخرى لاحقًا.");
       return;
     }
 
     console.log("🤖 Gemini Response:", geminiResponse.response);
 
-    // ✅ حفظ رد Gemini في الذاكرة
-    chatMemory[senderId][chatMemory[senderId].length - 1].bot = geminiResponse.response;
-
-    // ✅ إرسال الرد إلى ماسنجر
-    await sendMessage(senderId, geminiResponse.response);
+    // ✅ إرسال الرد إلى ماسنجر مرة واحدة فقط
+    await sendMessage(lastSenderId, geminiResponse.response);
     
-    // ✅ إيقاف حالة "يكتب..."
-    await setTypingOff(senderId);
+    // ✅ إيقاف الكتابة بعد إرسال الرد
+    await setTypingOff(lastSenderId);
     
   } catch (error) {
     console.error("❌ Error processing message:", error);
-    await sendMessage(senderId, "⚠️ حدث خطأ أثناء معالجة طلبك. حاول مرة أخرى لاحقًا.");
+    await sendMessage(lastSenderId, "⚠️ حدث خطأ أثناء معالجة طلبك. حاول مرة أخرى لاحقًا.");
   }
 });
 
