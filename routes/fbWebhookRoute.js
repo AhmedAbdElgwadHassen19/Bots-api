@@ -4,8 +4,7 @@ const { chatCompletion } = require('../helper/openaiApi');
 require('dotenv').config();
 
 const router = express.Router();
-let lastSenderId = null;
-let conversationContext = "";
+let chatMemory = {}; // ✅ تخزين المحادثات لكل مستخدم بشكل منفصل
 
 // ✅ **التحقق من Webhook عند تسجيله في Meta Developer Console**
 router.get('/webhook', (req, res) => {
@@ -45,10 +44,10 @@ router.post('/send-prompt', async (req, res) => {
   }
 });
 
-// ✅ استقبال رسائل ماسنجر وإرسالها إلى Gemini
+// ✅ استقبال رسائل ماسنجر وإرسالها إلى Gemini مع حفظ المحادثات السابقة
 router.post('/webhook', async (req, res) => {
   try {
-    console.log("📩 Received Webhook Event:", JSON.stringify(req.body, null, 2));
+    console.log("📩 Received Webhook Event");
 
     const body = req.body;
     res.status(200).send('EVENT_RECEIVED'); // ✅ تأكيد استلام الحدث لفيسبوك
@@ -61,59 +60,71 @@ router.post('/webhook', async (req, res) => {
     const messageEvent = body.entry[0].messaging[0];
 
     // ✅ **تجنب الرد على رسائل البوت نفسه**
-    if (messageEvent.message?.is_echo) {
-      console.warn("⚠️ Ignoring bot's own message.");
+    if (messageEvent.message?.is_echo || messageEvent.delivery || messageEvent.read) {
+      console.warn("⚠️ Ignoring bot's own message or delivery/read notifications.");
       return;
     }
 
-    // ✅ **تجنب الرد على إشعارات التسليم والقراءة**
-    if (messageEvent.delivery || messageEvent.read) {
-      console.warn("⚠️ Ignoring delivery/read notification.");
-      return;
-    }
-
-    lastSenderId = messageEvent.sender.id;
+    const senderId = messageEvent.sender.id;
     const userMessage = messageEvent.message?.text;
 
-    // ✅ **إذا لم تكن الرسالة نصية، تجاهلها بدون إرسال أي رد**
     if (!userMessage) {
       console.warn("⚠️ Received a non-text message, ignoring it.");
       return;
     }
 
-    console.log("📨 Received Message from Messenger:", userMessage);
+    console.log(`📨 Received Message from Messenger (${senderId}):`, userMessage);
 
-    // ✅ التأكد من أن هناك برومبت من الفرونت
-    if (!conversationContext) {
-      console.warn("⚠️ No prompt set from frontend. Using default.");
-      conversationContext = "أنت مساعد ذكي يجيب فقط ضمن النطاق المحدد له.";
+    // ✅ إنشاء ذاكرة محادثة للمستخدم إذا لم تكن موجودة
+    if (!chatMemory[senderId]) {
+      chatMemory[senderId] = [];
     }
 
-    // ✅ إرسال الكتابة أثناء تجهيز الرد
-    await setTypingOn(lastSenderId);
+    // ✅ إضافة الرسالة الجديدة إلى الذاكرة
+    chatMemory[senderId].push({ user: userMessage });
 
-    // ✅ إنشاء برومبت محكوم بالحدود المرسلة من الفرونت
-    const fullPrompt = `${conversationContext}\n\nUser: ${userMessage}\nAssistant:`;
+    // ✅ التأكد من أن ذاكرة المستخدم لا تتجاوز 10 رسائل
+    if (chatMemory[senderId].length > 10) {
+      chatMemory[senderId].shift(); // حذف أقدم رسالة للحفاظ على الحجم
+    }
+
+    // ✅ البحث عن محادثات مشابهة داخل ذاكرة المستخدم
+    let previousResponse = chatMemory[senderId].find(msg => msg.user.includes(userMessage));
+
+    if (previousResponse && previousResponse.bot) {
+      console.log("♻️ استرجاع رد سابق:", previousResponse.bot);
+      await sendMessage(senderId, previousResponse.bot);
+      return;
+    }
+
+    // ✅ إرسال حالة "يكتب..."
+    await setTypingOn(senderId);
+
+    // ✅ تجهيز البرومبت مع المحادثات السابقة
+    let chatHistory = chatMemory[senderId].map(msg => `User: ${msg.user}\nAssistant: ${msg.bot || ""}`).join("\n");
+    const fullPrompt = `${conversationContext}\n\n${chatHistory}\nUser: ${userMessage}\nAssistant:`;
 
     console.log("🧠 Sending to Gemini with prompt:", fullPrompt);
 
     // ✅ إرسال السؤال إلى Gemini
     const geminiResponse = await chatCompletion(fullPrompt);
 
-    // ✅ التحقق من استجابة `Gemini`
     if (!geminiResponse || !geminiResponse.response) {
       console.error("❌ Error: Gemini response is empty.");
-      await sendMessage(lastSenderId, "⚠️ لم أتمكن من معالجة طلبك، حاول مرة أخرى لاحقًا.");
+      await sendMessage(senderId, "⚠️ لم أتمكن من معالجة طلبك، حاول مرة أخرى لاحقًا.");
       return;
     }
 
     console.log("🤖 Gemini Response:", geminiResponse.response);
 
-    // ✅ إرسال الرد إلى ماسنجر مرة واحدة فقط
-    await sendMessage(lastSenderId, geminiResponse.response);
+    // ✅ حفظ رد Gemini في الذاكرة
+    chatMemory[senderId][chatMemory[senderId].length - 1].bot = geminiResponse.response;
+
+    // ✅ إرسال الرد إلى ماسنجر
+    await sendMessage(senderId, geminiResponse.response);
     
-    // ✅ إيقاف الكتابة بعد إرسال الرد
-    await setTypingOff(lastSenderId);
+    // ✅ إيقاف حالة "يكتب..."
+    await setTypingOff(senderId);
     
   } catch (error) {
     console.error("❌ Error processing message:", error);
