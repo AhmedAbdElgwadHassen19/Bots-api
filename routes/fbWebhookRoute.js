@@ -4,7 +4,7 @@ const { chatCompletion } = require('../helper/openaiApi');
 require('dotenv').config();
 
 const router = express.Router();
-let chatMemory = {}; // ✅ تخزين المحادثات لكل مستخدم بشكل منفصل
+let chatMemory = {}; // ✅ تخزين المحادثات لكل مستخدم
 
 // ✅ **التحقق من Webhook عند تسجيله في Meta Developer Console**
 router.get('/webhook', (req, res) => {
@@ -26,24 +26,6 @@ router.get('/webhook', (req, res) => {
   res.status(400).send('❌ Bad Request: Missing Parameters');
 });
 
-// ✅ استقبال البرومبت من الفرونت لتحديث سياق المحادثة
-router.post('/send-prompt', async (req, res) => {
-  try {
-    const { prompt } = req.body;
-    if (!prompt) {
-      return res.status(400).json({ message: "❌ الرجاء إدخال برومبت صالح" });
-    }
-
-    conversationContext = prompt;
-    console.log("🔄 تم تحديث سياق المحادثة:", conversationContext);
-
-    res.json({ message: "✅ تم تحديث معلومات Gemini بنجاح!" });
-  } catch (error) {
-    console.error("❌ Error in /send-prompt:", error);
-    res.status(500).json({ message: "⚠️ حدث خطأ غير متوقع" });
-  }
-});
-
 // ✅ استقبال رسائل ماسنجر وإرسالها إلى Gemini مع حفظ المحادثات السابقة
 router.post('/webhook', async (req, res) => {
   try {
@@ -59,7 +41,6 @@ router.post('/webhook', async (req, res) => {
 
     const messageEvent = body.entry[0].messaging[0];
 
-    // ✅ **تجنب الرد على رسائل البوت نفسه**
     if (messageEvent.message?.is_echo || messageEvent.delivery || messageEvent.read) {
       console.warn("⚠️ Ignoring bot's own message or delivery/read notifications.");
       return;
@@ -75,6 +56,13 @@ router.post('/webhook', async (req, res) => {
 
     console.log(`📨 Received Message from Messenger (${senderId}):`, userMessage);
 
+    // ✅ مسح ذاكرة المحادثة عند انتهاء الجلسة
+    if (userMessage.toLowerCase() === "انتهينا" || userMessage.toLowerCase() === "ابدأ من جديد") {
+      chatMemory[senderId] = []; // ✅ مسح ذاكرة المحادثة لهذا المستخدم
+      await sendMessage(senderId, "🗑️ تم مسح المحادثة! كيف يمكنني مساعدتك؟");
+      return;
+    }
+
     // ✅ إنشاء ذاكرة محادثة للمستخدم إذا لم تكن موجودة
     if (!chatMemory[senderId]) {
       chatMemory[senderId] = [];
@@ -88,21 +76,12 @@ router.post('/webhook', async (req, res) => {
       chatMemory[senderId].shift(); // حذف أقدم رسالة للحفاظ على الحجم
     }
 
-    // ✅ البحث عن محادثات مشابهة داخل ذاكرة المستخدم
-    let previousResponse = chatMemory[senderId].find(msg => msg.user.includes(userMessage));
-
-    if (previousResponse && previousResponse.bot) {
-      console.log("♻️ استرجاع رد سابق:", previousResponse.bot);
-      await sendMessage(senderId, previousResponse.bot);
-      return;
-    }
-
     // ✅ إرسال حالة "يكتب..."
     await setTypingOn(senderId);
 
     // ✅ تجهيز البرومبت مع المحادثات السابقة
     let chatHistory = chatMemory[senderId].map(msg => `User: ${msg.user}\nAssistant: ${msg.bot || ""}`).join("\n");
-    const fullPrompt = `${conversationContext}\n\n${chatHistory}\nUser: ${userMessage}\nAssistant:`;
+    const fullPrompt = `أنت مساعد ذكي يعتمد على السياق السابق:\n\n${chatHistory}\nUser: ${userMessage}\nAssistant:`;
 
     console.log("🧠 Sending to Gemini with prompt:", fullPrompt);
 
@@ -128,7 +107,7 @@ router.post('/webhook', async (req, res) => {
     
   } catch (error) {
     console.error("❌ Error processing message:", error);
-    await sendMessage(lastSenderId, "⚠️ حدث خطأ أثناء معالجة طلبك. حاول مرة أخرى لاحقًا.");
+    await sendMessage(senderId, "⚠️ حدث خطأ أثناء معالجة طلبك. حاول مرة أخرى لاحقًا.");
   }
 });
 
