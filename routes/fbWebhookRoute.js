@@ -7,7 +7,7 @@ const router = express.Router();
 let lastSenderId = null;
 let conversationContext = "";
 
-// ✅ تخزين المحادثات لكل مستخدم أثناء تشغيل السيرفر
+// ✅ تخزين المحادثات لكل مستخدم أثناء تشغيل السيرفر (ذاكرة قصيرة المدى)
 let userSessions = {};
 
 // ✅ التحقق من Webhook عند تسجيله في Meta Developer Console
@@ -48,12 +48,18 @@ router.post('/send-prompt', async (req, res) => {
   }
 });
 
-// ✅ تحديث سياق المحادثة لكل مستخدم
+// ✅ تحديث سياق المحادثة لكل مستخدم مع حد أقصى 30 رسالة
 function updateUserSession(userId, userMessage) {
   if (!userSessions[userId]) {
-    userSessions[userId] = { conversation: "" };
+    userSessions[userId] = { conversation: [] };
   }
-  userSessions[userId].conversation += `\nUser: ${userMessage}`;
+
+  userSessions[userId].conversation.push(`User: ${userMessage}`);
+
+  // ✅ إذا تجاوزت المحادثة 30 رسالة، احذف الأقدم
+  if (userSessions[userId].conversation.length > 30) {
+    userSessions[userId].conversation.shift();
+  }
 }
 
 // ✅ استقبال رسائل ماسنجر وإرسالها إلى Gemini
@@ -104,7 +110,7 @@ router.post('/webhook', async (req, res) => {
     updateUserSession(lastSenderId, userMessage);
 
     // ✅ إنشاء برومبت باستخدام المحادثة الكاملة لكل مستخدم
-    const fullPrompt = `${conversationContext}\n${userSessions[lastSenderId].conversation}\nAssistant:`;
+    const fullPrompt = `${conversationContext}\n${userSessions[lastSenderId].conversation.join("\n")}\nAssistant:`;
 
     console.log("🧠 Sending to Gemini with context:", fullPrompt);
 
@@ -121,7 +127,12 @@ router.post('/webhook', async (req, res) => {
     console.log("🤖 Gemini Response:", geminiResponse.response);
 
     // ✅ تحديث المحادثة بإضافة رد البوت
-    userSessions[lastSenderId].conversation += `\nAssistant: ${geminiResponse.response}`;
+    userSessions[lastSenderId].conversation.push(`Assistant: ${geminiResponse.response}`);
+
+    // ✅ إذا تجاوزت المحادثة 30 رسالة، احذف الأقدم
+    if (userSessions[lastSenderId].conversation.length > 30) {
+      userSessions[lastSenderId].conversation.shift();
+    }
 
     // ✅ إرسال الرد إلى ماسنجر
     await sendMessage(lastSenderId, geminiResponse.response);
@@ -135,9 +146,16 @@ router.post('/webhook', async (req, res) => {
   }
 });
 
-// ✅ مسح الجلسة بعد إنهاء المحادثة
-function clearUserSession(userId) {
-  delete userSessions[userId];
-}
+// ✅ مسح الجلسة بعد 30 دقيقة من آخر تفاعل
+setInterval(() => {
+  const now = Date.now();
+  for (const userId in userSessions) {
+    const lastMessageTime = userSessions[userId].lastMessageTime || now;
+    if (now - lastMessageTime > 30 * 60 * 1000) {
+      console.log(`🗑️ حذف جلسة المستخدم ${userId} بعد 30 دقيقة من عدم النشاط.`);
+      delete userSessions[userId];
+    }
+  }
+}, 5 * 60 * 1000); // تشغيل التنظيف كل 5 دقائق
 
 module.exports = { router };

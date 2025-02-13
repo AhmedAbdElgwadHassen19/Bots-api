@@ -6,6 +6,8 @@ const SEND_API_URL = `https://graph.facebook.com/v17.0/me/messages`; // ✅ اس
 
 // ✅ دالة إرسال الرسائل إلى ماسنجر
 const sendMessage = async (senderId, message) => {
+  console.log(`📩 جاري إرسال الرسالة إلى المستخدم ${senderId}: "${message}"`);
+
   const data = {
     recipient: { id: senderId },
     message: { text: message },
@@ -15,11 +17,18 @@ const sendMessage = async (senderId, message) => {
     const response = await axios.post(SEND_API_URL, data, {
       params: { access_token: PAGE_ACCESS_TOKEN }
     });
-    console.log(`✅ Message sent successfully to user ${senderId}:`, response.data);
+
+    console.log(`✅ تم إرسال الرسالة بنجاح:`, response.data);
   } catch (error) {
-    console.error("❌ Error sending message:", error.response?.data || error);
+    console.error("❌ فشل في إرسال الرسالة إلى ماسنجر:");
+    console.error(error.response?.data || error);
+
+    if (error.response?.status === 400) {
+      console.error("⚠️ تحقق من أن PAGE_ACCESS_TOKEN صالح.");
+    }
   }
 };
+
 
 // ✅ تفعيل حالة "يكتب..."
 const setTypingOn = async (senderId) => {
@@ -32,9 +41,9 @@ const setTypingOn = async (senderId) => {
     await axios.post(SEND_API_URL, data, {
       params: { access_token: PAGE_ACCESS_TOKEN }
     });
-    console.log(`✍️ Typing indicator set for user ${senderId}`);
+    console.log(`✍️ تم تفعيل حالة الكتابة للمستخدم ${senderId}`);
   } catch (error) {
-    console.error("❌ Error setting typing indicator:", error.response?.data || error);
+    console.error("❌ فشل في تفعيل حالة الكتابة:", error.response?.data || error);
   }
 };
 
@@ -49,9 +58,9 @@ const setTypingOff = async (senderId) => {
     await axios.post(SEND_API_URL, data, {
       params: { access_token: PAGE_ACCESS_TOKEN }
     });
-    console.log(`✅ Typing indicator stopped for user ${senderId}`);
+    console.log(`✅ تم إيقاف حالة الكتابة للمستخدم ${senderId}`);
   } catch (error) {
-    console.error("❌ Error stopping typing indicator:", error.response?.data || error);
+    console.error("❌ فشل في إيقاف حالة الكتابة:", error.response?.data || error);
   }
 };
 
