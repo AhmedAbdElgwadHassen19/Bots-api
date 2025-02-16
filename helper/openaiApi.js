@@ -39,7 +39,7 @@ const chatCompletion = async (fullPrompt, modelType = selectedModel, retries = 3
       return chatCompletion(fullPrompt, modelType, retries - 1);
     }
 
-    return { status: 0, response: "⚠️ حدث خطأ أثناء الاتصال بـ Gemini. حاول لاحقًا." };
+    return { status: 0, response: "لما أفهمك ممكن توضيح اكثر " };
   }
 };
 
