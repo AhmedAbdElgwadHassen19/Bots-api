@@ -2,10 +2,32 @@ const express = require('express');
 const { sendMessage, setTypingOn, setTypingOff } = require('../helper/messengerApi');
 const { chatCompletion } = require('../helper/openaiApi');
 require('dotenv').config();
+const { setModel, getModel } = require('../helper/openaiApi');
 
 const router = express.Router();
 let lastSenderId = null;
 let conversationContext = "";
+let botActive = true; //  ✅البوت مفعل افتراضيًا
+// ✅ API لتحديث حالة البوت من الفرونت إند
+router.post('/api/set-bot-status', (req, res) => {
+  botActive = req.body.botActive;
+  console.log(`🔄 حالة البوت تم تحديثها: ${botActive ? "✅ مفعل" : "⛔ متوقف"}`);
+  res.json({ message: `تم تحديث حالة البوت إلى: ${botActive ? "✅ مفعل" : "⛔ متوقف"}` });
+});
+
+router.post('/api/set-model', (req, res) => {
+  const { model } = req.body;
+  if (!model) {
+    return res.status(400).json({ message: "❌ الرجاء اختيار موديل صحيح." });
+  }
+
+  setModel(model);
+  console.log(`🔄 تم تحديث الموديل إلى: ${getModel()}`);
+
+  res.json({ message: `✅ تم تحديث الموديل إلى: ${getModel()}` });
+});
+
+
 
 // ✅ تخزين المحادثات لكل مستخدم أثناء تشغيل السيرفر (ذاكرة قصيرة المدى)
 let userSessions = {};
@@ -67,6 +89,15 @@ router.post('/webhook', async (req, res) => {
   try {
     console.log("📩 Received Webhook Event:", JSON.stringify(req.body, null, 2));
 
+    if (!botActive) {
+      console.warn("⛔ البوت متوقف، لن يتم إرسال أي رسالة.");
+      return; // 🔴 يتم تجاهل أي رسالة إذا كان البوت متوقفًا
+    }
+    if (!getModel()) {
+      console.warn("⚠️ لم يتم اختيار موديل بعد. الرجاء اختيار موديل قبل بدء المحادثة.");
+      return;
+    }
+    
     const body = req.body;
     res.status(200).send('EVENT_RECEIVED'); // ✅ تأكيد استلام الحدث لفيسبوك
 
@@ -110,9 +141,9 @@ router.post('/webhook', async (req, res) => {
     updateUserSession(lastSenderId, userMessage);
 
     // ✅ إنشاء برومبت باستخدام المحادثة الكاملة لكل مستخدم
-    const fullPrompt = `${conversationContext}\n${userSessions[lastSenderId].conversation.join("\n")}\nAssistant:`;
+    const lastMessages = userSessions[lastSenderId].conversation.slice(-10); // الاحتفاظ بآخر 10 رسائل فقط
+    const fullPrompt = `${conversationContext}\n${lastMessages.join("\n")}\nAssistant:`;
 
-    console.log("🧠 Sending to Gemini with context:", fullPrompt);
 
     // ✅ إرسال السؤال إلى Gemini
     const geminiResponse = await chatCompletion(fullPrompt);
@@ -129,8 +160,8 @@ router.post('/webhook', async (req, res) => {
     // ✅ تحديث المحادثة بإضافة رد البوت
     userSessions[lastSenderId].conversation.push(`Assistant: ${geminiResponse.response}`);
 
-    // ✅ إذا تجاوزت المحادثة 30 رسالة، احذف الأقدم
-    if (userSessions[lastSenderId].conversation.length > 30) {
+    // ✅ إذا تجاوزت المحادثة 10 رسالة، احذف الأقدم
+    if (userSessions[lastSenderId].conversation.length > 10) {
       userSessions[lastSenderId].conversation.shift();
     }
 
@@ -146,13 +177,13 @@ router.post('/webhook', async (req, res) => {
   }
 });
 
-// ✅ مسح الجلسة بعد 30 دقيقة من آخر تفاعل
+// ✅ مسح الجلسة بعد 15 دقيقة من آخر تفاعل
 setInterval(() => {
   const now = Date.now();
   for (const userId in userSessions) {
     const lastMessageTime = userSessions[userId].lastMessageTime || now;
-    if (now - lastMessageTime > 30 * 60 * 1000) {
-      console.log(`🗑️ حذف جلسة المستخدم ${userId} بعد 30 دقيقة من عدم النشاط.`);
+    if (now - lastMessageTime > 15 * 60 * 1000) {
+      console.log(`🗑️ حذف جلسة المستخدم ${userId} بعد 15 دقيقة من عدم النشاط.`);
       delete userSessions[userId];
     }
   }

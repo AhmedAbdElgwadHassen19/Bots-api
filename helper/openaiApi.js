@@ -3,22 +3,32 @@ require('dotenv').config();
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-let selectedModel = "gemini-1.5-pro"; // ✅ الموديل الافتراضي
+let selectedModel = null; // ❌ لا يوجد موديل افتراضي، يجب على المستخدم اختياره
 
-// ✅ تحديث الموديل المختار
+// ✅ تحديث الموديل المختار من الفرونت
 const setModel = (model) => {
+  if (!model) {
+    console.error("❌ لم يتم استقبال موديل صالح!");
+    return;
+  }
   selectedModel = model;
+  console.log(`✅ تم تحديث الموديل إلى: ${selectedModel}`);
 };
 
 // ✅ جلب الموديل الحالي
 const getModel = () => selectedModel;
 
 // ✅ إرسال البرومبت باستخدام الموديل المختار
-const chatCompletion = async (fullPrompt, modelType = selectedModel, retries = 3) => {
+const chatCompletion = async (fullPrompt, retries = 3) => {
   try {
-    console.log(`🔍 استخدام الموديل: ${modelType}`);
+    if (!selectedModel) {
+      console.error("");
+      return { status: 0, response: "" };
+    }
 
-    const model = genAI.getGenerativeModel({ model: modelType });
+    console.log(`🔍 استخدام الموديل: ${selectedModel}`);
+
+    const model = genAI.getGenerativeModel({ model: selectedModel });
 
     const result = await model.generateContent({
       contents: [{ parts: [{ text: fullPrompt }] }],
@@ -27,20 +37,31 @@ const chatCompletion = async (fullPrompt, modelType = selectedModel, retries = 3
       }
     });
 
+    if (!result || !result.response || !result.response.candidates || result.response.candidates.length === 0) {
+      throw new Error("");
+    }
+
     const text = result.response.candidates[0].content.parts[0].text.trim();
     return { status: 1, response: text };
 
   } catch (error) {
-    console.error("❌ Error calling Gemini:", error);
+    console.error("", error);
 
-    if (error.status === 503 && retries > 0) {
-      console.log(`🔄 إعادة المحاولة (${4 - retries})...`);
-      await new Promise(res => setTimeout(res, 5000));
-      return chatCompletion(fullPrompt, modelType, retries - 1);
+    if (error.message.includes("Invalid model") || error.message.includes("not found")) {
+      return { status: 0, response: "" };
     }
 
-    return { status: 0, response: "لما أفهمك ممكن توضيح اكثر " };
+    if (error.status === 503 && retries > 0) {
+      console.log(`🔄 إعادة المحاولة (${3 - retries})...`);
+      await new Promise(res => setTimeout(res, 3000));
+      return chatCompletion(fullPrompt, retries - 1);
+    }
+
+    return { status: 0, response: "" };
   }
 };
 
-module.exports = { chatCompletion, setModel, getModel };
+// ✅ منع إرسال البرومبت إذا لم يتم اختيار موديل
+const isModelSelected = () => selectedModel !== null;
+
+module.exports = { chatCompletion, setModel, getModel, isModelSelected };
