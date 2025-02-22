@@ -33,7 +33,7 @@ const chatCompletion = async (fullPrompt, retries = 3) => {
     const result = await model.generateContent({
       contents: [{ parts: [{ text: fullPrompt }] }],
       generationConfig: {
-        maxOutputTokens: 4096
+        maxOutputTokens: 300
       }
     });
 
