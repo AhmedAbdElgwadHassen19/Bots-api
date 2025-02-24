@@ -8,13 +8,14 @@ const router = express.Router();
 let lastSenderId = null;
 let conversationContext = "";
 let botActive = true; //  ✅البوت مفعل افتراضيًا
+
 // ✅ API لتحديث حالة البوت من الفرونت إند
 router.post('/api/set-bot-status', (req, res) => {
   botActive = req.body.botActive;
   console.log(`🔄 حالة البوت تم تحديثها: ${botActive ? "✅ مفعل" : "⛔ متوقف"}`);
   res.json({ message: `تم تحديث حالة البوت إلى: ${botActive ? "✅ مفعل" : "⛔ متوقف"}` });
 });
-
+// ✅ API لتحديث الموديل المختار من الفرونت إند
 router.post('/api/set-model', (req, res) => {
   const { model } = req.body;
   if (!model) {
@@ -27,7 +28,7 @@ router.post('/api/set-model', (req, res) => {
   res.json({ message: `✅ تم تحديث الموديل إلى: ${getModel()}` });
 });
 
-
+// ✅ API لتحديث عدد التوكنات من الفرونت إند
 
 // ✅ تخزين المحادثات لكل مستخدم أثناء تشغيل السيرفر (ذاكرة قصيرة المدى)
 let userSessions = {};
@@ -53,24 +54,39 @@ router.get('/webhook', (req, res) => {
 });
 
 // ✅ استقبال البرومبت من الفرونت لتحديث سياق المحادثة
-router.post('/send-prompt', async (req, res) => {
+router.post('/api/send-prompt', async (req, res) => {
   try {
-    const { prompt } = req.body;
-    if (!prompt) {
-      return res.status(400).json({ message: "❌ الرجاء إدخال برومبت صالح" });
+    console.log("📩 البيانات المستلمة من الفرونت:", req.body); // ✅ طباعة البيانات للتأكد من استقبالها
+
+    const { prompt, inputTokens, outputTokens } = req.body;
+
+    if (!prompt || !inputTokens || !outputTokens) {
+      console.error("❌ بيانات ناقصة:", { prompt, inputTokens, outputTokens });
+      return res.status(400).json({ message: "❌ كل البيانات مطلوبة: برومبت + Input Tokens + Output Tokens" });
+    }
+    conversationContext = prompt; // ✅ تحديث سياق المحادثة
+    console.log(`🔄 استقبال البيانات:
+    - برومبت: ${prompt}
+    - Input Tokens: ${inputTokens}
+    - Output Tokens: ${outputTokens}`);
+    const fullPrompt = `${conversationContext}\nUser: ${prompt}\nAssistant:`; // ✅ تجهيز البرومبت
+    const geminiResponse = await chatCompletion(fullPrompt, parseInt(inputTokens), parseInt(outputTokens));
+
+console.log(req.body)
+    if (!geminiResponse || !geminiResponse.response) {
+      return res.status(500).json({ message: "❌ خطأ في معالجة الاستجابة." });
     }
 
-    conversationContext = prompt;
-    console.log("🔄 تم تحديث سياق المحادثة:", conversationContext);
-
-    res.json({ message: "✅ تم تحديث معلومات Gemini بنجاح!" });
+    res.json({ message: "✅ تم إرسال البرومبت ومعالجة الاستجابة!", response: geminiResponse.response });
   } catch (error) {
-    console.error("❌ Error in /send-prompt:", error);
-    res.status(500).json({ message: "⚠️ حدث خطأ غير متوقع" });
+    console.error("❌ خطأ أثناء إرسال البرومبت:", error);
+    res.status(500).json({ message: "⚠️ حدث خطأ غير متوقع", error: error.message });
   }
 });
 
-// ✅ تحديث سياق المحادثة لكل مستخدم مع حد أقصى 30 رسالة
+
+
+// ✅ تحديث سياق المحادثة لكل مستخدم مع حد أقصى 15 رسالة
 function updateUserSession(userId, userMessage) {
   if (!userSessions[userId]) {
     userSessions[userId] = { conversation: [] };
@@ -177,12 +193,12 @@ router.post('/webhook', async (req, res) => {
   }
 });
 
-// ✅ مسح الجلسة بعد 15 دقيقة من آخر تفاعل
+// ✅ مسح الجلسة بعد 10 دقيقة من آخر تفاعل
 setInterval(() => {
   const now = Date.now();
   for (const userId in userSessions) {
     const lastMessageTime = userSessions[userId].lastMessageTime || now;
-    if (now - lastMessageTime > 15 * 60 * 1000) {
+    if (now - lastMessageTime > 10 * 60 * 1000) {
       console.log(`🗑️ حذف جلسة المستخدم ${userId} بعد 15 دقيقة من عدم النشاط.`);
       delete userSessions[userId];
     }

@@ -4,6 +4,7 @@ require('dotenv').config();
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 let selectedModel = null; // ❌ لا يوجد موديل افتراضي، يجب على المستخدم اختياره
+let conversationContext = ""; // ✅ تخزين `prompt` القادم من الفرونت إند
 
 // ✅ تحديث الموديل المختار من الفرونت
 const setModel = (model) => {
@@ -15,46 +16,63 @@ const setModel = (model) => {
   console.log(`✅ تم تحديث الموديل إلى: ${selectedModel}`);
 };
 
+// ✅ تحديث `prompt` من الفرونت إند
+const setPrompt = (prompt) => {
+  if (!prompt) {
+    console.error("❌ لم يتم استقبال برومبت صالح!");
+    return;
+  }
+  conversationContext = prompt;
+  console.log(`✅ تم تحديث البرومبت إلى: ${conversationContext}`);
+};
+
 // ✅ جلب الموديل الحالي
 const getModel = () => selectedModel;
 
-// ✅ إرسال البرومبت باستخدام الموديل المختار
-const chatCompletion = async (fullPrompt, retries = 3) => {
+// ✅ إرسال البرومبت باستخدام الموديل المختار مع دعم inputTokens و outputTokens
+const chatCompletion = async (userMessage, inputTokens, outputTokens, retries = 3) => {
   try {
     if (!selectedModel) {
-      console.error("");
+      console.error("⚠️ لم يتم تحديد موديل.");
       return { status: 0, response: "" };
     }
 
-    console.log(`🔍 استخدام الموديل: ${selectedModel}`);
+    if (!conversationContext) {
+      console.warn("⚠️ لا يوجد برومبت محدد، سيتم استخدام برومبت افتراضي.");
+      conversationContext = "أنت مساعد ذكي يجيب فقط ضمن النطاق المحدد له.";
+    }
+
+    console.log(`🔍 استخدام الموديل: ${selectedModel}\n- برومبت: ${conversationContext}\n- رسالة المستخدم: ${userMessage}\n- Input Tokens: ${inputTokens}\n- Output Tokens: ${outputTokens}`);
 
     const model = genAI.getGenerativeModel({ model: selectedModel });
+
+    const fullPrompt = `${conversationContext}\nUser: ${userMessage}\nAssistant:`;
+
+    console.log("📌 عدد التوكنات المطلوب:", outputTokens);
 
     const result = await model.generateContent({
       contents: [{ parts: [{ text: fullPrompt }] }],
       generationConfig: {
-        maxOutputTokens: 300
+        maxOutputTokens: outputTokens, 
+        temperature: 0.3,  // ⬅️ تقليل العشوائية لردود مختصرة
+        topP: 0.1 
       }
     });
 
     if (!result || !result.response || !result.response.candidates || result.response.candidates.length === 0) {
-      throw new Error("");
+      throw new Error("❌ لا يوجد رد من Gemini.");
     }
 
     const text = result.response.candidates[0].content.parts[0].text.trim();
     return { status: 1, response: text };
 
   } catch (error) {
-    console.error("", error);
-
-    if (error.message.includes("Invalid model") || error.message.includes("not found")) {
-      return { status: 0, response: "" };
-    }
+    console.error("❌ خطأ أثناء معالجة البرومبت:", error);
 
     if (error.status === 503 && retries > 0) {
-      console.log(`🔄 إعادة المحاولة (${3 - retries})...`);
-      await new Promise(res => setTimeout(res, 3000));
-      return chatCompletion(fullPrompt, retries - 1);
+      console.log(`🔄 إعادة المحاولة بعد 5 ثواني (${3 - retries}/3)...`);
+      await new Promise(res => setTimeout(res, 5000));
+      return chatCompletion(userMessage, inputTokens, outputTokens, retries - 1);
     }
 
     return { status: 0, response: "" };
@@ -64,4 +82,4 @@ const chatCompletion = async (fullPrompt, retries = 3) => {
 // ✅ منع إرسال البرومبت إذا لم يتم اختيار موديل
 const isModelSelected = () => selectedModel !== null;
 
-module.exports = { chatCompletion, setModel, getModel, isModelSelected };
+module.exports = { chatCompletion, setModel, setPrompt, getModel, isModelSelected };
