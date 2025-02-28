@@ -18,16 +18,17 @@ const setModel = (model) => {
 
 // ✅ تحديث `prompt` من الفرونت إند
 const setPrompt = (prompt) => {
-  if (!prompt) {
+  if (!prompt || prompt.trim() === "") {
     console.error("❌ لم يتم استقبال برومبت صالح!");
     return;
   }
-  conversationContext = prompt;
+  conversationContext = prompt.trim();
   console.log(`✅ تم تحديث البرومبت إلى: ${conversationContext}`);
 };
 
 // ✅ جلب الموديل الحالي
 const getModel = () => selectedModel;
+console.log(`🚀 الموديل المستخدم: ${selectedModel}`);
 
 // ✅ إرسال البرومبت باستخدام الموديل المختار مع دعم inputTokens و outputTokens
 const chatCompletion = async (userMessage, inputTokens, outputTokens, retries = 3) => {
@@ -39,24 +40,27 @@ const chatCompletion = async (userMessage, inputTokens, outputTokens, retries = 
 
     if (!conversationContext) {
       console.warn("⚠️ لا يوجد برومبت محدد، سيتم استخدام برومبت افتراضي.");
-      conversationContext = "أنت مساعد ذكي يجيب فقط ضمن النطاق المحدد له.";
     }
 
     console.log(`🔍 استخدام الموديل: ${selectedModel}\n- برومبت: ${conversationContext}\n- رسالة المستخدم: ${userMessage}\n- Input Tokens: ${inputTokens}\n- Output Tokens: ${outputTokens}`);
 
     const model = genAI.getGenerativeModel({ model: selectedModel });
 
-    const fullPrompt = `${conversationContext}\nUser: ${userMessage}\nAssistant:`;
+    const fullPrompt = `${conversationContext}\nUser: ${userMessage}\nAssistant (يرجى الرد في حدود ${outputTokens} كلمة):`;
+
+
+
 
     console.log("📌 عدد التوكنات المطلوب:", outputTokens);
 
     const result = await model.generateContent({
       contents: [{ parts: [{ text: fullPrompt }] }],
       generationConfig: {
-        maxOutputTokens: outputTokens, 
-        temperature: 0.3,  // ⬅️ تقليل العشوائية لردود مختصرة
+        maxOutputTokens: Math.min(outputTokens * 2, 100), // مضاعفة العدد لضمان الدقة
+        temperature: 0.3,  
         topP: 0.1 
       }
+      
     });
 
     if (!result || !result.response || !result.response.candidates || result.response.candidates.length === 0) {
@@ -82,4 +86,4 @@ const chatCompletion = async (userMessage, inputTokens, outputTokens, retries = 
 // ✅ منع إرسال البرومبت إذا لم يتم اختيار موديل
 const isModelSelected = () => selectedModel !== null;
 
-module.exports = { chatCompletion, setModel, setPrompt, getModel, isModelSelected };
+module.exports = { chatCompletion, setModel, setPrompt , getModel, isModelSelected };

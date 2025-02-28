@@ -1,6 +1,6 @@
 const express = require('express');
 const { sendMessage, setTypingOn, setTypingOff } = require('../helper/messengerApi');
-const { chatCompletion } = require('../helper/openaiApi');
+const { chatCompletion ,setPrompt } = require('../helper/openaiApi');
 require('dotenv').config();
 const { setModel, getModel } = require('../helper/openaiApi');
 
@@ -52,38 +52,59 @@ router.get('/webhook', (req, res) => {
   }
   res.status(400).send('❌ Bad Request: Missing Parameters');
 });
-
-// ✅ استقبال البرومبت من الفرونت لتحديث سياق المحادثة
-router.post('/api/send-prompt', async (req, res) => {
+// ✅ API لإرسال التوكن من الفرونت إند
+router.post('/api/tokens', (req, res) => {
   try {
-    console.log("📩 البيانات المستلمة من الفرونت:", req.body); // ✅ طباعة البيانات للتأكد من استقبالها
+    let { inputTokens, outputTokens } = req.body;
 
-    const { prompt, inputTokens, outputTokens } = req.body;
+    inputTokens = parseInt(inputTokens);
+    outputTokens = parseInt(outputTokens);
 
-    if (!prompt || !inputTokens || !outputTokens) {
-      console.error("❌ بيانات ناقصة:", { prompt, inputTokens, outputTokens });
-      return res.status(400).json({ message: "❌ كل البيانات مطلوبة: برومبت + Input Tokens + Output Tokens" });
-    }
-    conversationContext = prompt; // ✅ تحديث سياق المحادثة
-    console.log(`🔄 استقبال البيانات:
-    - برومبت: ${prompt}
-    - Input Tokens: ${inputTokens}
-    - Output Tokens: ${outputTokens}`);
-    const fullPrompt = `${conversationContext}\nUser: ${prompt}\nAssistant:`; // ✅ تجهيز البرومبت
-    const geminiResponse = await chatCompletion(fullPrompt, parseInt(inputTokens), parseInt(outputTokens));
-
-console.log(req.body)
-    if (!geminiResponse || !geminiResponse.response) {
-      return res.status(500).json({ message: "❌ خطأ في معالجة الاستجابة." });
+    if (isNaN(inputTokens) || isNaN(outputTokens)) {
+      console.error("❌ قيم التوكنات غير صالحة:", { inputTokens, outputTokens });
+      return res.status(400).json({ message: "❌ الرجاء إدخال قيم رقمية صحيحة." });
     }
 
-    res.json({ message: "✅ تم إرسال البرومبت ومعالجة الاستجابة!", response: geminiResponse.response });
+    console.log(`✅ توكنات مستلمة: Input - ${inputTokens}, Output - ${outputTokens}`);
+    res.json({ message: "✅ تم استقبال التوكنات بنجاح!", inputTokens, outputTokens });
+
   } catch (error) {
-    console.error("❌ خطأ أثناء إرسال البرومبت:", error);
-    res.status(500).json({ message: "⚠️ حدث خطأ غير متوقع", error: error.message });
+    console.error("❌ خطأ أثناء معالجة التوكنات:", error);
+    res.status(500).json({ message: "❌ حدث خطأ غير متوقع." });
   }
 });
 
+router.post('/api/send-prompt', async (req, res) => {
+  try {
+    let { prompt, inputTokens, outputTokens } = req.body;
+
+
+    if (!prompt || prompt.trim() === "") {
+      console.error("❌ برومبت غير صالح:", { prompt });
+      return res.status(400).json({ message: "❌ الرجاء إدخال برومبت صحيح." });
+    }
+
+    console.log(`✅ برومبت مستلم: ${prompt}`);
+
+    setPrompt(prompt);
+    const response = await chatCompletion(prompt, inputTokens, outputTokens);
+    
+
+    if (!response || response.status === 0) {
+      console.error("❌ لم يتمكن Gemini من الرد.");
+      return res.status(500).json({ message: "❌ لم يتمكن Gemini من معالجة البرومبت." });
+    }
+
+    console.log("🤖 رد Gemini:", response.response);
+
+    // ✅ إرسال الرد إلى الفرونت إند
+    res.json({ message: "✅ تم استقبال البرومبت بنجاح!", prompt, response: response.response });
+
+  } catch (error) {
+    console.error("❌ خطأ أثناء معالجة البرومبت:", error);
+    res.status(500).json({ message: "❌ حدث خطأ غير متوقع." });
+  }
+});
 
 
 // ✅ تحديث سياق المحادثة لكل مستخدم مع حد أقصى 15 رسالة
