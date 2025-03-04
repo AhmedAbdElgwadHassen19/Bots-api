@@ -8,13 +8,18 @@ const router = express.Router();
 let lastSenderId = null;
 let conversationContext = "";
 let botActive = true; //  ✅البوت مفعل افتراضيًا
+let botActivationTime = Date.now(); // ✅ وقت تشغيل البوت
 
 // ✅ API لتحديث حالة البوت من الفرونت إند
 router.post('/api/set-bot-status', (req, res) => {
   botActive = req.body.botActive;
+  if (botActive) {
+      botActivationTime = Date.now(); // ✅ تحديث وقت التفعيل عند تشغيل البوت
+  }
   console.log(`🔄 حالة البوت تم تحديثها: ${botActive ? "✅ مفعل" : "⛔ متوقف"}`);
   res.json({ message: `تم تحديث حالة البوت إلى: ${botActive ? "✅ مفعل" : "⛔ متوقف"}` });
 });
+
 // ✅ API لتحديث الموديل المختار من الفرونت إند
 router.post('/api/set-model', (req, res) => {
   const { model } = req.body;
@@ -28,7 +33,6 @@ router.post('/api/set-model', (req, res) => {
   res.json({ message: `✅ تم تحديث الموديل إلى: ${getModel()}` });
 });
 
-// ✅ API لتحديث عدد التوكنات من الفرونت إند
 
 // ✅ تخزين المحادثات لكل مستخدم أثناء تشغيل السيرفر (ذاكرة قصيرة المدى)
 let userSessions = {};
@@ -144,6 +148,13 @@ router.post('/webhook', async (req, res) => {
     }
 
     const messageEvent = body.entry[0].messaging[0];
+    const messageTimestamp = messageEvent.timestamp; // ✅ وقت إرسال الرسالة
+    // ✅ تجاهل أي رسالة تم استلامها أثناء توقف البوت
+    if (messageTimestamp < botActivationTime) {
+        console.warn("⏳ تم تجاهل رسالة قديمة.");
+        return;
+    }
+
 
     // ✅ **تجنب الرد على رسائل البوت نفسه**
     if (messageEvent.message?.is_echo) {
@@ -188,7 +199,7 @@ router.post('/webhook', async (req, res) => {
     // ✅ التحقق من استجابة `Gemini`
     if (!geminiResponse || !geminiResponse.response) {
       console.error("❌ Error: Gemini response is empty.");
-      await sendMessage(lastSenderId, "⚠️ لم أتمكن من معالجة طلبك، حاول مرة أخرى لاحقًا.");
+      await sendMessage(lastSenderId, " ");
       return;
     }
 
@@ -210,7 +221,7 @@ router.post('/webhook', async (req, res) => {
     
   } catch (error) {
     console.error("❌ Error processing message:", error);
-    await sendMessage(lastSenderId, "⚠️ حدث خطأ أثناء معالجة طلبك. حاول مرة أخرى لاحقًا.");
+    await sendMessage(lastSenderId, " ");
   }
 });
 
