@@ -2,7 +2,8 @@ const express = require('express');
 const { sendMessage, setTypingOn, setTypingOff } = require('../helper/messengerApi');
 const { chatCompletion ,setPrompt } = require('../helper/openaiApi');
 require('dotenv').config();
-const { setModel, getModel } = require('../helper/openaiApi');
+const { setModel, getModel, setApiKey  } = require('../helper/openaiApi');
+const axios = require('axios'); // ✅ استيراد axios
 
 const router = express.Router();
 let lastSenderId = null;
@@ -33,6 +34,34 @@ router.post('/api/set-model', (req, res) => {
   res.json({ message: `✅ تم تحديث الموديل إلى: ${getModel()}` });
 });
 
+router.post('/api/check-api-key', async (req, res) => {
+  console.log("📩 استقبال API Key من الفرونت إند:", req.body); // ✅ تحقق من استقبال المفتاح
+
+  const { apiKey } = req.body;
+
+  if (!apiKey || apiKey.trim() === "") {
+      console.error("❌ لم يتم إرسال `API Key` أو أنه فارغ!");
+      return res.status(400).json({ valid: false, error: "❌ الرجاء إدخال مفتاح API صالح." });
+  }
+
+  try {
+      console.log("🚀 التحقق من المفتاح عبر Google:", apiKey);
+      const googleResponse = await axios.get(`https://generativelanguage.googleapis.com/v1/models?key=${apiKey}`);
+
+      console.log("✅ استجابة Google:", googleResponse.data);
+
+      if (googleResponse.status === 200) {
+          // ✅ المفتاح صالح → احفظه في `openaiApi.js`
+          setApiKey(apiKey);
+          console.log(`🔑 API Key تم تحديثه: ${apiKey}`);
+          return res.json({ valid: true, message: "✅ مفتاح API صالح وتم حفظه بنجاح!" });
+      }
+      
+  } catch (error) {
+      console.error("❌ مفتاح API غير صالح:", error.response ? error.response.data : error.message);
+      return res.status(400).json({ valid: false, error: "❌ مفتاح API غير صالح، الرجاء إدخال مفتاح صحيح." });
+  }
+});
 
 // ✅ تخزين المحادثات لكل مستخدم أثناء تشغيل السيرفر (ذاكرة قصيرة المدى)
 let userSessions = {};
@@ -109,7 +138,6 @@ router.post('/api/send-prompt', async (req, res) => {
     res.status(500).json({ message: "❌ حدث خطأ غير متوقع." });
   }
 });
-
 
 // ✅ تحديث سياق المحادثة لكل مستخدم مع حد أقصى 15 رسالة
 function updateUserSession(userId, userMessage) {
