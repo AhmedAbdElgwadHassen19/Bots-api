@@ -2,16 +2,37 @@ const axios = require('axios');
 require('dotenv').config();
 
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
-const SEND_API_URL = `https://graph.facebook.com/v17.0/me/messages`; // ✅ استخدم "me" بدلاً من Page_ID
+const SEND_API_URL = `https://graph.facebook.com/v17.0/me/messages`;
 
-// ✅ دالة إرسال الرسائل إلى ماسنجر
+// ✅ دالة إرسال الرسائل إلى ماسنجر (تدعم النصوص والصور)
 const sendMessage = async (senderId, message) => {
-  console.log(`📩 جاري إرسال الرسالة إلى المستخدم ${senderId}: "${message}"`);
+  console.log(`📩 جاري إرسال الرسالة إلى المستخدم ${senderId}:`, message);
 
-  const data = {
-    recipient: { id: senderId },
-    message: { text: message },
-  };
+  let data;
+
+  // ✅ إذا كانت الرسالة تحتوي على صورة، يتم إرسالها كمرفق
+if (typeof message === "string" && message.startsWith("http")) {
+    data = {
+      recipient: { id: senderId },
+      message: {
+        attachment: {
+          type: "image",
+          payload: { url: message }
+        }
+      }
+    };
+  } else if (typeof message === "object" && message.attachment) {
+    data = {
+      recipient: { id: senderId },
+      message: message, // ✅ يدعم الصور والمرفقات
+    };
+  } else {
+    // ✅ إرسال رسالة نصية عادية
+    data = {
+      recipient: { id: senderId },
+      message: { text: message },
+    };
+  }
 
   try {
     const response = await axios.post(SEND_API_URL, data, {
@@ -28,7 +49,6 @@ const sendMessage = async (senderId, message) => {
     }
   }
 };
-
 
 // ✅ تفعيل حالة "يكتب..."
 const setTypingOn = async (senderId) => {

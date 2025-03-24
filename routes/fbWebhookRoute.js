@@ -1,28 +1,104 @@
-const express = require('express');
-const { sendMessage, setTypingOn, setTypingOff } = require('../helper/messengerApi');
-const { chatCompletion ,setPrompt } = require('../helper/openaiApi');
-require('dotenv').config();
-const { setModel, getModel, setApiKey  } = require('../helper/openaiApi');
-const axios = require('axios'); // ✅ استيراد axios
-
+const express = require("express");
+const {
+  sendMessage,
+  setTypingOn,
+  setTypingOff,
+} = require("../helper/messengerApi");
+const { chatCompletion, setPrompt } = require("../helper/openaiApi");
+require("dotenv").config();
+const { setModel, getModel, setApiKey } = require("../helper/openaiApi");
+const axios = require("axios"); // ✅ استيراد axios
+const mongoose = require("mongoose");
 const router = express.Router();
-let lastSenderId = null;
+let senderId = null;
 let conversationContext = "";
 let botActive = true; //  ✅البوت مفعل افتراضيًا
 let botActivationTime = Date.now(); // ✅ وقت تشغيل البوت
+const Image = require("../models/Image");
+
+// ✅ الاتصال بـ `MongoDB Atlas`
+mongoose
+  .connect(process.env.MONGO_URI)
+  .then(() => console.log("✅ تم الاتصال بقاعدة البيانات MongoDB بنجاح!"))
+  .catch((err) => console.error("❌ فشل الاتصال بقاعدة البيانات:", err));
+
+const multer = require("multer");
+const cloudinary = require("cloudinary").v2;
+
+// ✅ إعداد `Cloudinary`
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
+
+// ✅ إعداد `Multer` لاستقبال الصور
+const storage = multer.memoryStorage();
+const upload = multer({ storage });
+
+// ✅ API لرفع الصور إلى `Cloudinary` وتخزينها في `MongoDB`
+router.post("/api/upload-image", upload.single("image"), async (req, res) => {
+  try {
+    console.log("📥 البيانات المستلمة من الـ frontend:", req.file, req.body);
+
+    if (!req.file || !req.body.product_name) {
+      return res
+        .status(400)
+        .json({ error: "❌ الرجاء رفع صورة وإدخال اسم المنتج." });
+    }
+
+    // ✅ رفع الصورة إلى `Cloudinary`
+    cloudinary.uploader
+      .upload_stream({ resource_type: "image" }, async (error, result) => {
+        if (error) {
+          console.error("❌ خطأ في رفع الصورة إلى Cloudinary:", error);
+          return res
+            .status(500)
+            .json({ error: "❌ خطأ أثناء رفع الصورة إلى Cloudinary." });
+        }
+
+        console.log("✅ تم رفع الصورة إلى Cloudinary:", result.secure_url);
+
+        // ✅ حفظ بيانات الصورة في `MongoDB`
+        const newImage = new Image({
+          image_url: result.secure_url,
+          product_name: req.body.product_name,
+        });
+
+        await newImage.save();
+        console.log("✅ تم حفظ الصورة في قاعدة البيانات!");
+
+        res.json({
+          success: true,
+          imageUrl: result.secure_url,
+          message: "✅ تم رفع الصورة بنجاح!",
+        });
+      })
+      .end(req.file.buffer);
+  } catch (error) {
+    console.error("❌ خطأ في API رفع الصورة:", error);
+    res
+      .status(500)
+      .json({ error: "❌ حدث خطأ غير متوقع أثناء معالجة الصورة." });
+  }
+});
 
 // ✅ API لتحديث حالة البوت من الفرونت إند
-router.post('/api/set-bot-status', (req, res) => {
+router.post("/api/set-bot-status", (req, res) => {
   botActive = req.body.botActive;
   if (botActive) {
-      botActivationTime = Date.now(); // ✅ تحديث وقت التفعيل عند تشغيل البوت
+    botActivationTime = Date.now(); // ✅ تحديث وقت التفعيل عند تشغيل البوت
   }
-  console.log(`🔄 حالة البوت تم تحديثها: ${botActive ? "✅ مفعل" : "⛔ متوقف"}`);
-  res.json({ message: `تم تحديث حالة البوت إلى: ${botActive ? "✅ مفعل" : "⛔ متوقف"}` });
+  console.log(
+    `🔄 حالة البوت تم تحديثها: ${botActive ? "✅ مفعل" : "⛔ متوقف"}`
+  );
+  res.json({
+    message: `تم تحديث حالة البوت إلى: ${botActive ? "✅ مفعل" : "⛔ متوقف"}`,
+  });
 });
 
 // ✅ API لتحديث الموديل المختار من الفرونت إند
-router.post('/api/set-model', (req, res) => {
+router.post("/api/set-model", (req, res) => {
   const { model } = req.body;
   if (!model) {
     return res.status(400).json({ message: "❌ الرجاء اختيار موديل صحيح." });
@@ -34,32 +110,46 @@ router.post('/api/set-model', (req, res) => {
   res.json({ message: `✅ تم تحديث الموديل إلى: ${getModel()}` });
 });
 
-router.post('/api/check-api-key', async (req, res) => {
+router.post("/api/check-api-key", async (req, res) => {
   console.log("📩 استقبال API Key من الفرونت إند:", req.body); // ✅ تحقق من استقبال المفتاح
 
   const { apiKey } = req.body;
 
   if (!apiKey || apiKey.trim() === "") {
-      console.error("❌ لم يتم إرسال `API Key` أو أنه فارغ!");
-      return res.status(400).json({ valid: false, error: "❌ الرجاء إدخال مفتاح API صالح." });
+    console.error("❌ لم يتم إرسال `API Key` أو أنه فارغ!");
+    return res
+      .status(400)
+      .json({ valid: false, error: "❌ الرجاء إدخال مفتاح API صالح." });
   }
 
   try {
-      console.log("🚀 التحقق من المفتاح عبر Google:", apiKey);
-      const googleResponse = await axios.get(`https://generativelanguage.googleapis.com/v1/models?key=${apiKey}`);
+    console.log("🚀 التحقق من المفتاح عبر Google:", apiKey);
+    const googleResponse = await axios.get(
+      `https://generativelanguage.googleapis.com/v1/models?key=${apiKey}`
+    );
 
-      console.log("✅ استجابة Google:", googleResponse.data);
+    console.log("✅ استجابة Google:", googleResponse.data);
 
-      if (googleResponse.status === 200) {
-          // ✅ المفتاح صالح → احفظه في `openaiApi.js`
-          setApiKey(apiKey);
-          console.log(`🔑 API Key تم تحديثه: ${apiKey}`);
-          return res.json({ valid: true, message: "✅ مفتاح API صالح وتم حفظه بنجاح!" });
-      }
-      
+    if (googleResponse.status === 200) {
+      // ✅ المفتاح صالح → احفظه في `openaiApi.js`
+      setApiKey(apiKey);
+      console.log(`🔑 API Key تم تحديثه: ${apiKey}`);
+      return res.json({
+        valid: true,
+        message: "✅ مفتاح API صالح وتم حفظه بنجاح!",
+      });
+    }
   } catch (error) {
-      console.error("❌ مفتاح API غير صالح:", error.response ? error.response.data : error.message);
-      return res.status(400).json({ valid: false, error: "❌ مفتاح API غير صالح، الرجاء إدخال مفتاح صحيح." });
+    console.error(
+      "❌ مفتاح API غير صالح:",
+      error.response ? error.response.data : error.message
+    );
+    return res
+      .status(400)
+      .json({
+        valid: false,
+        error: "❌ مفتاح API غير صالح، الرجاء إدخال مفتاح صحيح.",
+      });
   }
 });
 
@@ -67,26 +157,26 @@ router.post('/api/check-api-key', async (req, res) => {
 let userSessions = {};
 
 // ✅ التحقق من Webhook عند تسجيله في Meta Developer Console
-router.get('/webhook', (req, res) => {
+router.get("/webhook", (req, res) => {
   console.log("🔍 Received Webhook Verification Request");
 
-  const mode = req.query['hub.mode'];
-  const token = req.query['hub.verify_token'];
-  const challenge = req.query['hub.challenge'];
+  const mode = req.query["hub.mode"];
+  const token = req.query["hub.verify_token"];
+  const challenge = req.query["hub.challenge"];
 
   if (mode && token) {
-    if (mode === 'subscribe' && token === process.env.VERIFY_TOKEN) {
-      console.log('✅ Webhook Verified Successfully!');
+    if (mode === "subscribe" && token === process.env.VERIFY_TOKEN) {
+      console.log("✅ Webhook Verified Successfully!");
       return res.status(200).send(challenge);
     } else {
-      console.log('❌ Webhook Verification Failed! Invalid Token');
-      return res.status(403).send('Forbidden: Verification Failed');
+      console.log("❌ Webhook Verification Failed! Invalid Token");
+      return res.status(403).send("Forbidden: Verification Failed");
     }
   }
-  res.status(400).send('❌ Bad Request: Missing Parameters');
+  res.status(400).send("❌ Bad Request: Missing Parameters");
 });
 // ✅ API لإرسال التوكن من الفرونت إند
-router.post('/api/tokens', (req, res) => {
+router.post("/api/tokens", (req, res) => {
   try {
     let { inputTokens, outputTokens } = req.body;
 
@@ -94,23 +184,32 @@ router.post('/api/tokens', (req, res) => {
     outputTokens = parseInt(outputTokens);
 
     if (isNaN(inputTokens) || isNaN(outputTokens)) {
-      console.error("❌ قيم التوكنات غير صالحة:", { inputTokens, outputTokens });
-      return res.status(400).json({ message: "❌ الرجاء إدخال قيم رقمية صحيحة." });
+      console.error("❌ قيم التوكنات غير صالحة:", {
+        inputTokens,
+        outputTokens,
+      });
+      return res
+        .status(400)
+        .json({ message: "❌ الرجاء إدخال قيم رقمية صحيحة." });
     }
 
-    console.log(`✅ توكنات مستلمة: Input - ${inputTokens}, Output - ${outputTokens}`);
-    res.json({ message: "✅ تم استقبال التوكنات بنجاح!", inputTokens, outputTokens });
-
+    console.log(
+      `✅ توكنات مستلمة: Input - ${inputTokens}, Output - ${outputTokens}`
+    );
+    res.json({
+      message: "✅ تم استقبال التوكنات بنجاح!",
+      inputTokens,
+      outputTokens,
+    });
   } catch (error) {
     console.error("❌ خطأ أثناء معالجة التوكنات:", error);
     res.status(500).json({ message: "❌ حدث خطأ غير متوقع." });
   }
 });
 
-router.post('/api/send-prompt', async (req, res) => {
+router.post("/api/send-prompt", async (req, res) => {
   try {
     let { prompt, inputTokens, outputTokens } = req.body;
-
 
     if (!prompt || prompt.trim() === "") {
       console.error("❌ برومبت غير صالح:", { prompt });
@@ -121,18 +220,22 @@ router.post('/api/send-prompt', async (req, res) => {
 
     setPrompt(prompt);
     const response = await chatCompletion(prompt, inputTokens, outputTokens);
-    
 
     if (!response || response.status === 0) {
       console.error("❌ لم يتمكن Gemini من الرد.");
-      return res.status(500).json({ message: "❌ لم يتمكن Gemini من معالجة البرومبت." });
+      return res
+        .status(500)
+        .json({ message: "❌ لم يتمكن Gemini من معالجة البرومبت." });
     }
 
     console.log("🤖 رد Gemini:", response.response);
 
     // ✅ إرسال الرد إلى الفرونت إند
-    res.json({ message: "✅ تم استقبال البرومبت بنجاح!", prompt, response: response.response });
-
+    res.json({
+      message: "✅ تم استقبال البرومبت بنجاح!",
+      prompt,
+      response: response.response,
+    });
   } catch (error) {
     console.error("❌ خطأ أثناء معالجة البرومبت:", error);
     res.status(500).json({ message: "❌ حدث خطأ غير متوقع." });
@@ -142,13 +245,14 @@ router.post('/api/send-prompt', async (req, res) => {
 // ✅ تحديث سياق المحادثة لكل مستخدم مع حد أقصى 15 رسالة
 function updateUserSession(userId, userMessage) {
   if (!userSessions[userId]) {
-    userSessions[userId] = { conversation: [] };
+    userSessions[userId] = { conversation: [], lastProduct: null, lastMessageTime: Date.now() };
   }
 
-  userSessions[userId].conversation.push(`User: ${userMessage}`);
+  userSessions[userId].conversation.push(userMessage);
+  userSessions[userId].lastMessageTime = Date.now();
 
-  // ✅ إذا تجاوزت المحادثة 30 رسالة، احذف الأقدم
-  if (userSessions[userId].conversation.length > 30) {
+  // ✅ الاحتفاظ بآخر 15 رسالة فقط
+  if (userSessions[userId].conversation.length > 20) {
     userSessions[userId].conversation.shift();
   }
 }
@@ -160,15 +264,15 @@ router.post('/webhook', async (req, res) => {
 
     if (!botActive) {
       console.warn("⛔ البوت متوقف، لن يتم إرسال أي رسالة.");
-      return; // 🔴 يتم تجاهل أي رسالة إذا كان البوت متوقفًا
+      return;
     }
     if (!getModel()) {
       console.warn("⚠️ لم يتم اختيار موديل بعد. الرجاء اختيار موديل قبل بدء المحادثة.");
       return;
     }
-    
+
     const body = req.body;
-    res.status(200).send('EVENT_RECEIVED'); // ✅ تأكيد استلام الحدث لفيسبوك
+    res.status(200).send('EVENT_RECEIVED');
 
     if (!body.entry || !body.entry[0].messaging) {
       console.warn("⚠️ Received webhook but no valid messaging event.");
@@ -176,82 +280,119 @@ router.post('/webhook', async (req, res) => {
     }
 
     const messageEvent = body.entry[0].messaging[0];
-    const messageTimestamp = messageEvent.timestamp; // ✅ وقت إرسال الرسالة
-    // ✅ تجاهل أي رسالة تم استلامها أثناء توقف البوت
-    if (messageTimestamp < botActivationTime) {
-        console.warn("⏳ تم تجاهل رسالة قديمة.");
-        return;
-    }
+    const senderId = messageEvent.sender.id;
+    const userMessage = messageEvent.message?.text?.trim(); // ✅ تنظيف النص من المسافات الزائدة
 
-
-    // ✅ **تجنب الرد على رسائل البوت نفسه**
-    if (messageEvent.message?.is_echo) {
-      console.warn("⚠️ Ignoring bot's own message.");
-      return;
-    }
-
-    // ✅ **تجنب الرد على إشعارات التسليم والقراءة**
-    if (messageEvent.delivery || messageEvent.read) {
-      console.warn("⚠️ Ignoring delivery/read notification.");
-      return;
-    }
-
-    lastSenderId = messageEvent.sender.id;
-    const userMessage = messageEvent.message?.text;
-
-    // ✅ **إذا لم تكن الرسالة نصية، تجاهلها بدون إرسال أي رد**
     if (!userMessage) {
       console.warn("⚠️ Received a non-text message, ignoring it.");
       return;
     }
-
     console.log("📨 Received Message from Messenger:", userMessage);
+    updateUserSession(senderId, userMessage);
+    // ✅ تفعيل "يكتب..." قبل البحث عن المنتج
+    await setTypingOn(senderId);
 
-    // ✅ التأكد من أن هناك برومبت من الفرونت
-    if (!conversationContext) {
-      console.warn("⚠️ No prompt set from frontend. Using default.");
-      conversationContext = "أنت مساعد ذكي يجيب فقط ضمن النطاق المحدد له.";
+    // ✅ التحقق مما إذا كان المستخدم يطلب رؤية آخر منتج تم ذكره
+    if (["وريني", "أعرض", "أظهر لي", "عايز أشوفه", "مشاهدة"].some(keyword => userMessage.includes(keyword))) {
+      const lastProductName = userSessions[senderId]?.lastProduct;
+      
+      if (lastProductName) {
+          console.log(`✅ المستخدم يريد رؤية المنتج السابق: ${lastProductName}`);
+          const product = await Image.findOne({ product_name: { $regex: new RegExp(lastProductName, "i") } });
+  
+          if (product) {
+              console.log(`✅ المنتج متوفر: ${product.product_name}, إرسال الصورة.`);
+              await sendMessage(senderId, { attachment: { type: "image", payload: { url: product.image_url } } });
+              return await setTypingOff(senderId);
+          }
+      }
+  
+      console.log("❌ لا يوجد منتج سابق، البحث عن منتج مشابه...");
+      const allProducts = await Image.find({});
+      let bestMatch = null;
+      let maxMatchCount = 0;
+  
+      allProducts.forEach(p => {
+          const matchCount = (userMessage.match(new RegExp(p.product_name, "gi")) || []).length;
+          if (matchCount > maxMatchCount) {
+              maxMatchCount = matchCount;
+              bestMatch = p;
+          }
+      });
+  
+      if (bestMatch) {
+          console.log(`✅ وجدنا منتج مشابه: ${bestMatch.product_name}, إرسال الصورة.`);
+          await sendMessage(senderId, { attachment: { type: "image", payload: { url: bestMatch.image_url } } });
+          return await setTypingOff(senderId);
+      }
+  
+      console.log("❌ لا يوجد منتج مطابق أو مشابه.");
+      await sendMessage(senderId, "للاسف غير متوفير");
+      return await setTypingOff(senderId);
+  }
+
+    // ✅ البحث عن المنتج في `MongoDB` باستخدام regex
+    // ✅ التحقق مما إذا كانت الرسالة تتعلق برؤية صورة منتج
+const isImageRequest = ["وريني", "أعرض", "أظهر لي", "عايز أشوفه", "مشاهدة"].some(keyword => userMessage.includes(keyword));
+
+if (isImageRequest) {
+    const product = await Image.findOne({ 
+        product_name: { $regex: new RegExp(userMessage, "i") } 
+    });
+
+    if (product) {
+        console.log(`✅ المنتج متوفر: ${product.product_name}, إرسال الصورة.`);
+        await sendMessage(senderId, { attachment: { type: "image", payload: { url: product.image_url } } });
+        return;
     }
 
-    // ✅ تحديث جلسة المستخدم بالمحادثة الجديدة
-    updateUserSession(lastSenderId, userMessage);
+    // ✅ إذا لم يكن المنتج موجودًا، لا يتم إرسال أي رد
+    console.log("❌ المنتج غير متوفر، ولن يتم إرسال أي رد.");
+    return;
+}
 
-    // ✅ إنشاء برومبت باستخدام المحادثة الكاملة لكل مستخدم
-    const lastMessages = userSessions[lastSenderId].conversation.slice(-10); // الاحتفاظ بآخر 10 رسائل فقط
-    const fullPrompt = `${conversationContext}\n${lastMessages.join("\n")}\nAssistant:`;
+// ✅ إذا لم يكن الطلب متعلقًا بالصور، يتم الرد باستخدام `prompt` القادم من الفرونت إند
+const frontendPrompt = userSessions[senderId]?.frontendPrompt || "لا يوجد برومبت محدد.";
+const lastMessages = userSessions[senderId]?.conversation?.join("\n") || "لا توجد محادثات سابقة.";
+
+const fullPrompt = `
+❗️ هام: استخدم المعلومات المتاحة في البرومبت فقط، ولا تحاول تحليل الطلب خارج هذه المعلومات.
+🚫 لا ترد على أي رسالة إلا إذا كانت متوافقة مع البرومبت القادم من الفرونت إند.
+🖼️ إذا طلب المستخدم صورة، تحقق فقط من قاعدة البيانات. إذا لم تكن متاحة، لا ترسل أي رد.
+
+🔹 البرومبت القادم من الفرونت إند:
+${frontendPrompt}
+
+📝 سياق المحادثة السابقة:
+${lastMessages}
+
+🔍 طلب المستخدم:
+${userMessage}
+`;
+
+// ✅ إرسال الطلب إلى Gemini
+const geminiResponse = await chatCompletion(fullPrompt);
+
+if (!geminiResponse || !geminiResponse.response) {
+    console.log("❌ لم يتم العثور على رد مناسب، لن يتم إرسال أي رد.");
+    return; // ⛔ لا يتم إرسال أي رد إذا لم يكن هناك إجابة من Gemini
+}
+
+// ✅ إرسال رد Gemini إلى المستخدم
+console.log("🤖 Gemini Response:", geminiResponse.response);
+await sendMessage(senderId, geminiResponse.response);
 
 
-    // ✅ إرسال السؤال إلى Gemini
-    const geminiResponse = await chatCompletion(fullPrompt);
+    // ✅ إيقاف "يكتب..." بعد إرسال الرد
+    await setTypingOff(senderId);
 
-    // ✅ التحقق من استجابة `Gemini`
-    if (!geminiResponse || !geminiResponse.response) {
-      console.error("❌ Error: Gemini response is empty.");
-      await sendMessage(lastSenderId, " ");
-      return;
-    }
-
-    console.log("🤖 Gemini Response:", geminiResponse.response);
-
-    // ✅ تحديث المحادثة بإضافة رد البوت
-    userSessions[lastSenderId].conversation.push(`Assistant: ${geminiResponse.response}`);
-
-    // ✅ إذا تجاوزت المحادثة 10 رسالة، احذف الأقدم
-    if (userSessions[lastSenderId].conversation.length > 10) {
-      userSessions[lastSenderId].conversation.shift();
-    }
-
-    // ✅ إرسال الرد إلى ماسنجر
-    await sendMessage(lastSenderId, geminiResponse.response);
-    
-    // ✅ إيقاف الكتابة بعد إرسال الرد
-    await setTypingOff(lastSenderId);
-    
   } catch (error) {
     console.error("❌ Error processing message:", error);
-    await sendMessage(lastSenderId, " ");
+    await sendMessage(senderId, "❌ حدث خطأ أثناء معالجة الطلب.");
+    await setTypingOff(senderId);
   }
 });
+
 
 // ✅ مسح الجلسة بعد 10 دقيقة من آخر تفاعل
 setInterval(() => {
@@ -266,3 +407,4 @@ setInterval(() => {
 }, 5 * 60 * 1000); // تشغيل التنظيف كل 5 دقائق
 
 module.exports = { router };
+
