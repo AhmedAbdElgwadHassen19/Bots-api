@@ -3,6 +3,7 @@ require('dotenv').config();
 let selectedModel = null;
 let conversationContext = "";
 let apiKey = "";
+// ✅ دالة لاسترجاع الموديل المختار
 
 // ✅ تحديث API Key
 const setApiKey = (key) => {
@@ -19,7 +20,7 @@ const setModel = (model) => {
   selectedModel = model;
   console.log(`✅ تم تحديث الموديل إلى: ${selectedModel}`);
 };
-
+const getModel = () => selectedModel;
 // ✅ تحديث `prompt` من الفرونت إند
 const setPrompt = (prompt) => {
   if (!prompt || prompt.trim() === "") {
@@ -42,13 +43,16 @@ const chatCompletion = async (userMessage, inputTokens, outputTokens, retries = 
       return { status: 0, response: "❌ لا يوجد API Key متاح." };
     }
 
-    console.log(`🔍 استخدام الموديل: ${selectedModel}\n- برومبت: ${conversationContext}\n- رسالة المستخدم: ${userMessage}`);
+    console.log(`🔍 استخدام الموديل: ${selectedModel}\n- برومبت: ${conversationContext}\n- رسالة المستخدم: ${
+      userMessage}`);
 
     const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({ model: selectedModel });
 
+    const fullPrompt = `${conversationContext}\nUser: ${userMessage}\nAssistant (يرجى الرد في حدود ${outputTokens} كلمة):`;
+
     const result = await model.generateContent({
-      contents: [{ parts: [{ text: conversationContext }] }],
+      contents: [{ parts: [{ text: fullPrompt  }] }],
       generationConfig: {
         maxOutputTokens: outputTokens,
         temperature: 0.2,
@@ -75,5 +79,6 @@ const chatCompletion = async (userMessage, inputTokens, outputTokens, retries = 
     return { status: 0, response: "" };
   }
 };
-
-module.exports = { chatCompletion, setModel, setPrompt, setApiKey };
+// ✅ منع إرسال البرومبت إذا لم يتم اختيار موديل
+const isModelSelected = () => selectedModel !== null;
+module.exports = { chatCompletion, setModel, getModel, setPrompt, setApiKey , isModelSelected };

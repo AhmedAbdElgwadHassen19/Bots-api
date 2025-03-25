@@ -4,13 +4,13 @@ const {
   setTypingOn,
   setTypingOff,
 } = require("../helper/messengerApi");
-const { chatCompletion, setPrompt } = require("../helper/openaiApi");
+const { chatCompletion, getModel , setPrompt } = require("../helper/openaiApi");
 require("dotenv").config();
-const { setModel, getModel, setApiKey } = require("../helper/openaiApi");
+const { setModel, setApiKey } = require("../helper/openaiApi");
 const axios = require("axios"); // ✅ استيراد axios
 const mongoose = require("mongoose");
 const router = express.Router();
-let senderId = null;
+let SenderId = null;
 let conversationContext = "";
 let botActive = true; //  ✅البوت مفعل افتراضيًا
 let botActivationTime = Date.now(); // ✅ وقت تشغيل البوت
@@ -210,7 +210,8 @@ router.post("/api/tokens", (req, res) => {
 router.post("/api/send-prompt", async (req, res) => {
   try {
     let { prompt, inputTokens, outputTokens } = req.body;
-
+    console.log("🔢 inputTokens:", inputTokens);
+    console.log("🔢 outputTokens:", outputTokens);
     if (!prompt || prompt.trim() === "") {
       console.error("❌ برومبت غير صالح:", { prompt });
       return res.status(400).json({ message: "❌ الرجاء إدخال برومبت صحيح." });
@@ -219,7 +220,7 @@ router.post("/api/send-prompt", async (req, res) => {
     console.log(`✅ برومبت مستلم: ${prompt}`);
 
     setPrompt(prompt);
-    const response = await chatCompletion(prompt, inputTokens, outputTokens);
+    const response = await chatCompletion(prompt, inputTokens, outputTokens );
 
     if (!response || response.status === 0) {
       console.error("❌ لم يتمكن Gemini من الرد.");
@@ -252,12 +253,13 @@ function updateUserSession(userId, userMessage) {
   userSessions[userId].lastMessageTime = Date.now();
 
   // ✅ الاحتفاظ بآخر 15 رسالة فقط
-  if (userSessions[userId].conversation.length > 20) {
+  if (userSessions[userId].conversation.length > 15) {
     userSessions[userId].conversation.shift();
   }
 }
 
 // ✅ استقبال رسائل ماسنجر وإرسالها إلى Gemini
+
 router.post('/webhook', async (req, res) => {
   try {
     console.log("📩 Received Webhook Event:", JSON.stringify(req.body, null, 2));
@@ -280,7 +282,7 @@ router.post('/webhook', async (req, res) => {
     }
 
     const messageEvent = body.entry[0].messaging[0];
-    const senderId = messageEvent.sender.id;
+    const SenderId = messageEvent.sender.id;
     const userMessage = messageEvent.message?.text?.trim(); // ✅ تنظيف النص من المسافات الزائدة
 
     if (!userMessage) {
@@ -288,13 +290,14 @@ router.post('/webhook', async (req, res) => {
       return;
     }
     console.log("📨 Received Message from Messenger:", userMessage);
-    updateUserSession(senderId, userMessage);
+
+    updateUserSession(SenderId, userMessage);
     // ✅ تفعيل "يكتب..." قبل البحث عن المنتج
-    await setTypingOn(senderId);
+    await setTypingOn(SenderId);
 
     // ✅ التحقق مما إذا كان المستخدم يطلب رؤية آخر منتج تم ذكره
     if (["وريني", "أعرض", "أظهر لي", "عايز أشوفه", "مشاهدة"].some(keyword => userMessage.includes(keyword))) {
-      const lastProductName = userSessions[senderId]?.lastProduct;
+      const lastProductName = userSessions[SenderId]?.lastProduct;
       
       if (lastProductName) {
           console.log(`✅ المستخدم يريد رؤية المنتج السابق: ${lastProductName}`);
@@ -302,8 +305,8 @@ router.post('/webhook', async (req, res) => {
   
           if (product) {
               console.log(`✅ المنتج متوفر: ${product.product_name}, إرسال الصورة.`);
-              await sendMessage(senderId, { attachment: { type: "image", payload: { url: product.image_url } } });
-              return await setTypingOff(senderId);
+              await sendMessage(SenderId, { attachment: { type: "image", payload: { url: product.image_url } } });
+              return await setTypingOff(SenderId);
           }
       }
   
@@ -322,13 +325,13 @@ router.post('/webhook', async (req, res) => {
   
       if (bestMatch) {
           console.log(`✅ وجدنا منتج مشابه: ${bestMatch.product_name}, إرسال الصورة.`);
-          await sendMessage(senderId, { attachment: { type: "image", payload: { url: bestMatch.image_url } } });
-          return await setTypingOff(senderId);
+          await sendMessage(SenderId, { attachment: { type: "image", payload: { url: bestMatch.image_url } } });
+          return await setTypingOff(SenderId);
       }
   
       console.log("❌ لا يوجد منتج مطابق أو مشابه.");
-      await sendMessage(senderId, "للاسف غير متوفير");
-      return await setTypingOff(senderId);
+      await sendMessage(SenderId, "للاسف غير متوفير");
+      return await setTypingOff(SenderId);
   }
 
     // ✅ البحث عن المنتج في `MongoDB` باستخدام regex
@@ -351,48 +354,43 @@ if (isImageRequest) {
     return;
 }
 
-// ✅ إذا لم يكن الطلب متعلقًا بالصور، يتم الرد باستخدام `prompt` القادم من الفرونت إند
-const frontendPrompt = userSessions[senderId]?.frontendPrompt || "لا يوجد برومبت محدد.";
-const lastMessages = userSessions[senderId]?.conversation?.join("\n") || "لا توجد محادثات سابقة.";
-
-const fullPrompt = `
-❗️ هام: استخدم المعلومات المتاحة في البرومبت فقط، ولا تحاول تحليل الطلب خارج هذه المعلومات.
-🚫 لا ترد على أي رسالة إلا إذا كانت متوافقة مع البرومبت القادم من الفرونت إند.
-🖼️ إذا طلب المستخدم صورة، تحقق فقط من قاعدة البيانات. إذا لم تكن متاحة، لا ترسل أي رد.
-
-🔹 البرومبت القادم من الفرونت إند:
-${frontendPrompt}
-
-📝 سياق المحادثة السابقة:
-${lastMessages}
-
-🔍 طلب المستخدم:
-${userMessage}
-`;
+if (!conversationContext) {
+  console.warn("⚠️ No prompt set from frontend. Using default.");
+  conversationContext = "أنت مساعد ذكي يجيب فقط ضمن النطاق المحدد له.";
+}
+// ✅ إنشاء برومبت باستخدام المحادثة الكاملة لكل مستخدم
+    const lastMessages = userSessions[SenderId].conversation.slice(-10); // الاحتفاظ بآخر 10 رسائل فقط
+    const fullPrompt = `${conversationContext}\n${lastMessages.join("\n")}\nAssistant:`;
 
 // ✅ إرسال الطلب إلى Gemini
 const geminiResponse = await chatCompletion(fullPrompt);
 
 if (!geminiResponse || !geminiResponse.response) {
-    console.log("❌ لم يتم العثور على رد مناسب، لن يتم إرسال أي رد.");
-    return; // ⛔ لا يتم إرسال أي رد إذا لم يكن هناك إجابة من Gemini
-}
+      console.error("❌ Error: Gemini response is empty.");
+      await sendMessage(SenderId, " ");
+      return;
+    }
 
 // ✅ إرسال رد Gemini إلى المستخدم
 console.log("🤖 Gemini Response:", geminiResponse.response);
-await sendMessage(senderId, geminiResponse.response);
 
+// ✅ تحديث المحادثة بإضافة رد البوت
+userSessions[SenderId].conversation.push(`Assistant: ${geminiResponse.response}`);
 
+// ✅ إذا تجاوزت المحادثة 10 رسالة، احذف الأقدم
+if (userSessions[SenderId].conversation.length > 10) {
+  userSessions[SenderId].conversation.shift();
+}
+    await sendMessage(SenderId, geminiResponse.response);
     // ✅ إيقاف "يكتب..." بعد إرسال الرد
-    await setTypingOff(senderId);
+    await setTypingOff(SenderId);
 
   } catch (error) {
     console.error("❌ Error processing message:", error);
-    await sendMessage(senderId, "❌ حدث خطأ أثناء معالجة الطلب.");
-    await setTypingOff(senderId);
+    await sendMessage(SenderId, "❌ حدث خطأ أثناء معالجة الطلب.");
+    await setTypingOff(SenderId);
   }
 });
-
 
 // ✅ مسح الجلسة بعد 10 دقيقة من آخر تفاعل
 setInterval(() => {
